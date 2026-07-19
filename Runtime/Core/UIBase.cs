@@ -19,6 +19,12 @@ namespace Feif.UIFramework
         public bool AutoDestroy = true;
 
         /// <summary>
+        /// 当该Panel被其他Panel覆盖时，关闭新Panel不返回此Panel
+        /// </summary>
+        [Tooltip("当该Panel被其他Panel覆盖时，关闭新Panel不返回此Panel")]
+        public bool SkipReturnWhenCovered = false;
+
+        /// <summary>
         /// 一级父节点
         /// </summary>
         public UIBase Parent;

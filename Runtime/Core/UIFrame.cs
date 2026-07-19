@@ -752,26 +752,31 @@ namespace Feif.UIFramework
                 });
                 if (GetLayer(type) is PanelLayer)
                 {
-                    if (CurrentPanel != null && type == CurrentPanel.GetType()) return CurrentPanel;
+                    var previousPanel = CurrentPanel;
+                    if (previousPanel != null && type == previousPanel.GetType()) return previousPanel;
 
                     UIBase[] currentUIBases = null;
-                    if (CurrentPanel != null)
+                    if (previousPanel != null)
                     {
-                        currentUIBases = CurrentPanel.BreadthTraversal().ToArray();
+                        currentUIBases = previousPanel.BreadthTraversal().ToArray();
                         DoUnbind(currentUIBases);
                     }
                     var instance = await RequestInstance(type, data);
                     var uibases = instance.GetComponent<UIBase>().BreadthTraversal().ToArray();
-                    if (data != null && CurrentPanel != null)
+                    if (data != null && previousPanel != null)
                     {
-                        data.Sender = CurrentPanel.GetType();
+                        data.Sender = previousPanel.GetType();
                     }
                     await DoRefresh(uibases);
-                    if (CurrentPanel != null)
+                    if (previousPanel != null)
                     {
                         DoHide(currentUIBases);
-                        CurrentPanel.gameObject.SetActive(false);
-                        if (CurrentPanel.AutoDestroy) ReleaseInstance(CurrentPanel.GetType());
+                        previousPanel.gameObject.SetActive(false);
+                        if (previousPanel.AutoDestroy) ReleaseInstance(previousPanel.GetType());
+                        if (previousPanel.SkipReturnWhenCovered && panelStack.Count > 0 && panelStack.Peek().type == previousPanel.GetType())
+                        {
+                            panelStack.Pop();
+                        }
                     }
                     instance.SetActive(true);
                     panelStack.Push((type, data));
