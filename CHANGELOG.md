@@ -1,4 +1,9 @@
 # Changelog
+
+##[1.2.0-q2-1.0] - 2026-07-19
+### Added
+- UIBase新增参数SkipReturnWhenCovered，当该Panel被其他Panel覆盖时，关闭新Panel不返回此Panel
+
 ## [1.2.0] - 2024-04-14
 ### Added
 - 添加代码生成功能(详情请看README)  
