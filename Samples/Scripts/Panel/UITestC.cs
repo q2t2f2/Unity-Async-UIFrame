@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using Feif.UIFramework;
 #if USING_UNITASK
@@ -9,23 +9,22 @@ using Task = System.Threading.Tasks.Task;
 
 namespace Feif.UI
 {
-    public class UITestBData : UIData
+    public class UITestCData : UIData
     {
         public string Title;
     }
 
     [PanelLayer]
-    public class UITestB : UIComponent<UITestBData>
+    public class UITestC : UIComponent<UITestCData>
     {
         [SerializeField] private Text txtTitle;
         [SerializeField] private SubUIA subuia;
         [SerializeField] private SubUIB subuib;
-        [SerializeField] private Button btnShowC;
 
         protected override Task OnRefresh()
         {
             txtTitle.text = this.Data.Title;
-            Debug.Log("Refresh UITestB");
+            Debug.Log("Refresh UITestC");
             subuib.Data = new SubUIBData()
             {
                 Content = $"来自父物体的刷新调用 {Random.Range(0, 100)}"
@@ -78,16 +77,6 @@ namespace Feif.UI
         {
             // 刷新，使用已有的UIData刷新
             UIFrame.Refresh(this);
-        }
-        
-        [UGUIButtonEvent("@BtnShowC")]
-        protected void OnBtnShowC()
-        {
-            // 显示UITestC
-            UIFrame.Show<UITestC>(new UITestCData()
-            {
-                Title = "来自UITestB的调用"
-            });
         }
     }
 }
