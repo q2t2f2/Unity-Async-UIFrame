@@ -24,7 +24,10 @@ namespace Feif.UIFramework
     [DisallowMultipleComponent]
     public class UIFrame : MonoBehaviour
     {
+        // 单例UI实例（用于 Panel / Window 等非 Popup 层）
         private static readonly Dictionary<Type, GameObject> instances = new Dictionary<Type, GameObject>();
+        // Popup 层可以同时存在多个同类型实例，使用列表存储
+        private static readonly Dictionary<Type, List<GameObject>> popupInstances = new Dictionary<Type, List<GameObject>>();
         private static readonly Stack<(Type type, UIData data)> panelStack = new Stack<(Type, UIData)>();
         private static readonly Dictionary<UILayer, RectTransform> uiLayers = new Dictionary<UILayer, RectTransform>();
         private static HashSet<UITimer> timers = new HashSet<UITimer>();
@@ -206,6 +209,34 @@ namespace Feif.UIFramework
             }
             else if (GetLayer(type) != null)
             {
+                var layer = GetLayer(type);
+                // Popup 层允许多实例，逐个隐藏/销毁
+                if (layer is PopupLayer)
+                {
+                    if (popupInstances.TryGetValue(type, out var list) && list != null)
+                    {
+                        var removeList = new List<GameObject>();
+                        foreach (var go in list.ToArray())
+                        {
+                            if (go == null) continue;
+                            var uibase = go.GetComponent<UIBase>();
+                            var uibases = uibase.BreadthTraversal().ToArray();
+                            DoUnbind(uibases);
+                            DoHide(uibases);
+                            go.SetActive(false);
+                            if (uibase.AutoDestroy || forceDestroy)
+                            {
+                                UIFrame.Destroy(go);
+                                removeList.Add(go);
+                            }
+                        }
+                        foreach (var r in removeList) list.Remove(r);
+                        if (list.Count == 0) popupInstances.Remove(type);
+                    }
+                    return Task.CompletedTask;
+                }
+
+                // 非 Popup（保持原有单例隐藏逻辑）
                 if (instances.TryGetValue(type, out var instance))
                 {
                     var uibase = instance.GetComponent<UIBase>();
@@ -225,7 +256,11 @@ namespace Feif.UIFramework
         /// </summary>
         public static Task Hide(UIBase ui, bool forceDestroy = false)
         {
-            if (GetLayer(ui) == null)
+            if (ui == null) return Task.CompletedTask;
+
+            var layer = GetLayer(ui);
+            // 子UI（无层）仍按原逻辑：隐藏传入的实例及其子节点
+            if (layer == null)
             {
                 if (!ui.gameObject.activeSelf) return Task.CompletedTask;
 
@@ -235,6 +270,26 @@ namespace Feif.UIFramework
                 ui.gameObject.SetActive(false);
                 return Task.CompletedTask;
             }
+
+            // 如果是 PopupLayer，仅隐藏传入的实例（允许多实例共存）
+            if (layer is PopupLayer)
+            {
+                if (!ui.gameObject.activeSelf) return Task.CompletedTask;
+
+                var uibases = ui.BreadthTraversal().ToArray();
+                DoUnbind(uibases);
+                DoHide(uibases);
+                ui.gameObject.SetActive(false);
+
+                if (ui.AutoDestroy || forceDestroy)
+                {
+                    // 仅销毁该实例（Destroy 会从 popupInstances 中移除引用）
+                    UIFrame.Destroy(ui.gameObject);
+                }
+                return Task.CompletedTask;
+            }
+
+            // 其他有层的 UI 保持原有按类型隐藏逻辑（单例行为）
             return Hide(ui.GetType(), forceDestroy);
         }
         #endregion
@@ -245,6 +300,13 @@ namespace Feif.UIFramework
         /// </summary>
         public static UIBase Get(Type type)
         {
+            if (type == null) return null;
+            // 优先返回 Popup 类型的最后一个实例（如果存在）
+            if (popupInstances.TryGetValue(type, out var list) && list != null && list.Count > 0)
+            {
+                var last = list[list.Count - 1];
+                if (last != null) return last.GetComponent<UIBase>();
+            }
             if (instances.TryGetValue(type, out var instance))
             {
                 return instance.GetComponent<UIBase>();
@@ -288,6 +350,16 @@ namespace Feif.UIFramework
                 if (predicate != null && !predicate.Invoke(item.Key)) continue;
 
                 yield return item.Value.GetComponent<UIBase>();
+            }
+            // 包含 Popup 多实例
+            foreach (var item in popupInstances)
+            {
+                if (predicate != null && !predicate.Invoke(item.Key)) continue;
+                foreach (var go in item.Value)
+                {
+                    if (go == null) continue;
+                    yield return go.GetComponent<UIBase>();
+                }
             }
         }
 
@@ -335,9 +407,15 @@ namespace Feif.UIFramework
         /// </summary>
         public static Task Refresh(Type type, UIData data = null)
         {
-            if (type != null && instances.TryGetValue(type, out var instance))
+            if (type == null) return Task.CompletedTask;
+            if (instances.TryGetValue(type, out var instance))
             {
                 return Refresh(instance.GetComponent<UIBase>(), data);
+            }
+            if (popupInstances.TryGetValue(type, out var list) && list != null && list.Count > 0)
+            {
+                var last = list[list.Count - 1];
+                if (last != null) return Refresh(last.GetComponent<UIBase>(), data);
             }
             return Task.CompletedTask;
         }
@@ -369,6 +447,16 @@ namespace Feif.UIFramework
                 if (predicate != null && !predicate.Invoke(item.Key)) continue;
 
                 await Refresh(item.Value.GetComponent<UIBase>());
+            }
+            // 刷新 Popup 多实例
+            foreach (var kv in popupInstances)
+            {
+                if (predicate != null && !predicate.Invoke(kv.Key)) continue;
+                foreach (var go in kv.Value)
+                {
+                    if (go == null) continue;
+                    await Refresh(go.GetComponent<UIBase>());
+                }
             }
         }
         #endregion
@@ -412,6 +500,32 @@ namespace Feif.UIFramework
                     Debug.LogException(ex);
                 }
             }
+
+            // 移除 popupInstances 中可能存在的引用，避免悬空引用
+            try
+            {
+                if (uibases != null && uibases.Length > 0)
+                {
+                    var root = uibases[0];
+                    if (root != null)
+                    {
+                        var type = root.GetType();
+                        lock (popupInstances)
+                        {
+                            if (popupInstances.TryGetValue(type, out var list) && list != null)
+                            {
+                                if (list.Contains(instance)) list.Remove(instance);
+                                if (list.Count == 0) popupInstances.Remove(type);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+
             GameObject.Destroy(instance);
         }
 
@@ -468,6 +582,30 @@ namespace Feif.UIFramework
             {
                 instances.Remove(item);
             }
+
+            // 处理 Popup 多实例的释放：移除所有已经不活跃的实例
+            var popupRemoveTypes = new List<Type>();
+            foreach (var kv in popupInstances)
+            {
+                var list = kv.Value;
+                if (list == null || list.Count == 0) { popupRemoveTypes.Add(kv.Key); continue; }
+                var toRemove = new List<GameObject>();
+                foreach (var go in list)
+                {
+                    if (go == null || !go.activeInHierarchy)
+                    {
+                        if (go != null) UIFrame.Destroy(go);
+                        toRemove.Add(go);
+                    }
+                }
+                foreach (var go in toRemove) list.Remove(go);
+                if (list.Count == 0) popupRemoveTypes.Add(kv.Key);
+            }
+            foreach (var t in popupRemoveTypes)
+            {
+                popupInstances.Remove(t);
+                OnAssetRelease?.Invoke(t);
+            }
         }
 
         /// <summary>
@@ -488,20 +626,47 @@ namespace Feif.UIFramework
         {
             if (type == null) throw new NullReferenceException();
 
-            if (instances.TryGetValue(type, out var instance))
+            // 如果是 Popup 层，则允许创建多个实例
+            var layer = GetLayer(type);
+            if (layer is PopupLayer)
             {
-                TrySetData(instance.GetComponent<UIBase>(), data);
+                GameObject refInstance = null;
+                if (OnAssetRelease != null)
+                {
+                    refInstance = await OnAssetRequest.Invoke(type);
+                }
+                var uibase = refInstance.GetComponent<UIBase>();
+                if (uibase == null) throw new Exception("预制体没有挂载继承自UIBase的脚本");
+                var parent = GetOrCreateLayerTransform(type);
+                var instance = await UIFrame.Instantiate(refInstance, parent, data);
+
+                lock (popupInstances)
+                {
+                    if (!popupInstances.TryGetValue(type, out var list) || list == null)
+                    {
+                        list = new List<GameObject>();
+                        popupInstances[type] = list;
+                    }
+                    list.Add(instance);
+                }
                 return instance;
             }
-            GameObject refInstance = null;
+
+            // 非 Popup（保持原有单例逻辑）
+            if (instances.TryGetValue(type, out var instanceObj))
+            {
+                TrySetData(instanceObj.GetComponent<UIBase>(), data);
+                return instanceObj;
+            }
+            GameObject refInst = null;
             if (OnAssetRelease != null)
             {
-                refInstance = await OnAssetRequest.Invoke(type);
+                refInst = await OnAssetRequest.Invoke(type);
             }
-            var uibase = refInstance.GetComponent<UIBase>();
-            if (uibase == null) throw new Exception("预制体没有挂载继承自UIBase的脚本");
-            var parent = GetOrCreateLayerTransform(type);
-            instance = await UIFrame.Instantiate(refInstance, parent, data);
+            var uibase2 = refInst.GetComponent<UIBase>();
+            if (uibase2 == null) throw new Exception("预制体没有挂载继承自UIBase的脚本");
+            var parent2 = GetOrCreateLayerTransform(type);
+            instanceObj = await UIFrame.Instantiate(refInst, parent2, data);
 
             // 处理并发创建问题：如果在当前请求过程中另一个请求已经创建并注册了该类型的实例，
             // 则销毁当前重复实例并返回已注册的实例，避免场景中存在多个相同类型的活跃实例
@@ -509,23 +674,37 @@ namespace Feif.UIFramework
             {
                 if (instances.TryGetValue(type, out var existing) && existing != null)
                 {
-                    // 将数据应用到已存在实例上（如果需要），并销毁当前多余的实例
                     TrySetData(existing.GetComponent<UIBase>(), data);
-                    // 使用UIFrame.Destroy以触发销毁流程（OnDied、InnerOnDied等）
-                    UIFrame.Destroy(instance);
-                    instance = existing;
+                    UIFrame.Destroy(instanceObj);
+                    instanceObj = existing;
                 }
                 else
                 {
-                    instances[type] = instance;
+                    instances[type] = instanceObj;
                 }
             }
-            return instance;
+            return instanceObj;
         }
 
         private static void ReleaseInstance(Type type)
         {
             if (type == null) return;
+
+            var layer = GetLayer(type);
+            if (layer is PopupLayer)
+            {
+                if (popupInstances.TryGetValue(type, out var list) && list != null)
+                {
+                    foreach (var go in list)
+                    {
+                        if (go == null) continue;
+                        UIFrame.Destroy(go);
+                    }
+                    popupInstances.Remove(type);
+                    OnAssetRelease?.Invoke(type);
+                }
+                return;
+            }
 
             if (instances.TryGetValue(type, out var instance))
             {
@@ -778,8 +957,8 @@ namespace Feif.UIFramework
                         currentUIBases = previousPanel.BreadthTraversal().ToArray();
                         DoUnbind(currentUIBases);
                     }
-                    var instance = await RequestInstance(type, data);
-                    var uibases = instance.GetComponent<UIBase>().BreadthTraversal().ToArray();
+                    var instanceGO = await RequestInstance(type, data);
+                    var uibases = instanceGO.GetComponent<UIBase>().BreadthTraversal().ToArray();
                     if (data != null && previousPanel != null)
                     {
                         data.Sender = previousPanel.GetType();
@@ -795,27 +974,27 @@ namespace Feif.UIFramework
                             panelStack.Pop();
                         }
                     }
-                    instance.SetActive(true);
+                    instanceGO.SetActive(true);
                     panelStack.Push((type, data));
                     DoBind(uibases);
                     DoShow(uibases);
-                    result = instance.GetComponent<UIBase>();
+                    result = instanceGO.GetComponent<UIBase>();
                 }
                 else if (GetLayer(type) != null)
                 {
-                    var instance = await RequestInstance(type, data);
-                    var uibases = instance.GetComponent<UIBase>().BreadthTraversal().ToArray();
+                    var instanceGO = await RequestInstance(type, data);
+                    var uibases = instanceGO.GetComponent<UIBase>().BreadthTraversal().ToArray();
 
                     if (data != null && CurrentPanel != null)
                     {
                         data.Sender = CurrentPanel.GetType();
                     }
                     await DoRefresh(uibases);
-                    instance.SetActive(true);
-                    instance.transform.SetAsLastSibling();
+                    instanceGO.SetActive(true);
+                    instanceGO.transform.SetAsLastSibling();
                     DoBind(uibases);
                     DoShow(uibases);
-                    result = instance.GetComponent<UIBase>();
+                    result = instanceGO.GetComponent<UIBase>();
                 }
                 timeout.Cancel();
                 if (isStuck) OnStuckEnd?.Invoke();

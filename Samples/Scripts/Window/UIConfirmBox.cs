@@ -19,7 +19,7 @@ namespace Feif.UI
     }
 
     // 这是一个Window，不需要UIData则继承UIBase，需要UIData则继承UIComponent
-    [WindowLayer]
+    [PopupLayer]
     public class UIConfirmBox : UIComponent<UIConfirmBoxData>
     {
         [SerializeField] private Text txtContent;
