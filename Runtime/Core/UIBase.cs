@@ -19,7 +19,7 @@ namespace Feif.UIFramework
         public bool AutoDestroy = true;
 
         /// <summary>
-        /// 当该Panel被其他Panel覆盖时，关闭新Panel不返回此Panel
+        /// UIBase为PanelWindow时，关闭页面会返回上一个PanelWindow，但有些页面不适合返回，当该Panel被其他Panel覆盖时，关闭新Panel不返回此Panel
         /// </summary>
         [Tooltip("当该Panel被其他Panel覆盖时，关闭新Panel不返回此Panel")]
         public bool SkipReturnWhenCovered = false;

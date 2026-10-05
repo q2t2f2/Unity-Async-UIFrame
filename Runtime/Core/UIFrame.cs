@@ -502,7 +502,24 @@ namespace Feif.UIFramework
             if (uibase == null) throw new Exception("预制体没有挂载继承自UIBase的脚本");
             var parent = GetOrCreateLayerTransform(type);
             instance = await UIFrame.Instantiate(refInstance, parent, data);
-            instances[type] = instance;
+
+            // 处理并发创建问题：如果在当前请求过程中另一个请求已经创建并注册了该类型的实例，
+            // 则销毁当前重复实例并返回已注册的实例，避免场景中存在多个相同类型的活跃实例
+            lock (instances)
+            {
+                if (instances.TryGetValue(type, out var existing) && existing != null)
+                {
+                    // 将数据应用到已存在实例上（如果需要），并销毁当前多余的实例
+                    TrySetData(existing.GetComponent<UIBase>(), data);
+                    // 使用UIFrame.Destroy以触发销毁流程（OnDied、InnerOnDied等）
+                    UIFrame.Destroy(instance);
+                    instance = existing;
+                }
+                else
+                {
+                    instances[type] = instance;
+                }
+            }
             return instance;
         }
 
