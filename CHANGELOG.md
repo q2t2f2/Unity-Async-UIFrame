@@ -1,5 +1,11 @@
 # Changelog
 
+##[1.2.0-q2-1.0] - 2026-10-06
+### Added
+- 修复同一种UI同时加载多个时的并发问题导致前加载的UI实例无法控制到值的卡死问题
+- 在WindowLayer和PanelLayer之外新增一种PopupLayer，如果UI属于PopupLayer，新增属于PopupLayer的UI可以有多个实例同时存在
+
+
 ##[1.2.0-q2-1.0] - 2026-07-19
 ### Added
 - UIBase新增参数SkipReturnWhenCovered，当该Panel被其他Panel覆盖时，关闭新Panel不返回此Panel
